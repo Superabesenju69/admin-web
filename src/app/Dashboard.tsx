@@ -67,8 +67,6 @@ export default function AdminDashboard() {
 
     async function handleExecuteCommand(action: string, data: any): Promise<boolean> {
         try {
-            const tenantId = typeof window !== 'undefined' ? localStorage.getItem('pos_tenant_id') : null;
-            
             if (action === 'ADD_INGREDIENT') {
                 const { name, cost_per_unit, stock_level, unit_of_measure } = data;
                 if (!name) return false;
@@ -79,8 +77,7 @@ export default function AdminDashboard() {
                     cost_per_unit: cost_per_unit || 0,
                     stock_level: stock_level || 0,
                     unit_of_measure: unit_of_measure || 'each',
-                    track_inventory: true,
-                    tenant_id: tenantId
+                    track_inventory: true
                 }]);
                 if (error) throw error;
                 await refreshInventory();
@@ -92,8 +89,7 @@ export default function AdminDashboard() {
                 if (!name) return false;
                 const { error } = await supabase.from('kitchen_stations').insert([{
                     name,
-                    display_order: display_order || 1,
-                    tenant_id: tenantId
+                    display_order: display_order || 1
                 }]);
                 if (error) throw error;
                 // Reload stations
@@ -108,8 +104,7 @@ export default function AdminDashboard() {
                 const { error } = await supabase.from('printers').insert([{
                     name,
                     ip_address: ip_address || '',
-                    port: 9100,
-                    tenant_id: tenantId
+                    port: 9100
                 }]);
                 if (error) throw error;
                 // Reload printers
@@ -131,8 +126,7 @@ export default function AdminDashboard() {
                     width: 100,
                     height: 80,
                     zone: defaultZone,
-                    capacity: 4,
-                    tenant_id: tenantId
+                    capacity: 4
                 }]);
                 if (error) throw error;
                 // Reload tables
