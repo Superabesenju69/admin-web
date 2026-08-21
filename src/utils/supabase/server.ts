@@ -2,15 +2,37 @@ import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 
 export async function createClient() {
-    const cookieStore = await cookies()
+    let cookieStore: any;
+    try {
+        cookieStore = await cookies();
+    } catch {
+        cookieStore = {
+            get: () => undefined,
+            getAll: () => [],
+            set: () => {}
+        };
+    }
+    const tenantId = cookieStore?.get?.('pos_tenant_id')?.value
+
+    const headers: Record<string, string> = {}
+    if (tenantId) {
+        headers['x-tenant-id'] = tenantId
+    }
 
     return createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
         {
+            global: {
+                headers
+            },
             cookies: {
                 getAll() {
-                    return cookieStore.getAll()
+                    try {
+                        return cookieStore.getAll?.() || []
+                    } catch {
+                        return []
+                    }
                 },
                 setAll(cookiesToSet) {
                     try {

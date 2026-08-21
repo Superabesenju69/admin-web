@@ -5,7 +5,7 @@ import { createClient } from '../utils/supabase/client';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { t } from '../utils/i18n';
+import { t, formatRole } from '../utils/i18n';
 import SettingsTab from '../components/tabs/SettingsTab';
 import UsersTab from '../components/tabs/UsersTab';
 import ReportsTab from '../components/tabs/ReportsTab';
@@ -16,12 +16,25 @@ import InventoryTab from '../components/tabs/InventoryTab';
 import CategoriesTab from '../components/tabs/CategoriesTab';
 import AttendanceTab from '../components/tabs/AttendanceTab';
 import PayrollTab from '../components/tabs/PayrollTab';
+import TenantsTab from '../components/tabs/TenantsTab';
 import CommandBar from '../components/CommandBar';
+import TenantSelector from '../components/TenantSelector';
+import CajaTab from '../components/tabs/CajaTab';
+import ExpensesTab from '../components/tabs/ExpensesTab';
+import AIAssistantTab from '../components/tabs/AIAssistantTab';
+import { generateExcelReport } from '../utils/excelGenerator';
+import { 
+    analyzeRecipeCost, 
+    draftPurchaseOrders, 
+    predictStaffingRequirements, 
+    analyzeSlowInventory, 
+    toggleItemAvailability 
+} from '../utils/aiAnalyticsEngine';
 
 const supabase = createClient();
 
-type Tab = 'menu' | 'inventory' | 'tables' | 'kitchen' | 'reports' | 'promotions' | 'settings' | 'users' | 'attendance' | 'payroll';
-type Role = 'super_admin' | 'owner' | 'admin' | 'cajero' | 'mesero' | 'cocinero' | 'estacion';
+type Tab = 'ai' | 'menu' | 'inventory' | 'tables' | 'kitchen' | 'reports' | 'promotions' | 'settings' | 'users' | 'attendance' | 'payroll' | 'tenants' | 'caja' | 'expenses';
+type Role = 'system_admin' | 'super_admin' | 'owner' | 'admin' | 'cajero' | 'mesero' | 'cocinero' | 'estacion';
 type TableShape = 'rectangle' | 'circle' | 'wall';
 
 // ─── Map bounds and sizing ───────────────────────────────────────────────────
@@ -52,6 +65,10 @@ export default function AdminDashboard() {
     const router = useRouter();
     const [tab, setTabState] = useState<Tab>('menu');
     const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
+    const [commandPrompt, setCommandPrompt] = useState('');
+    const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
+    const [selectedTenantName, setSelectedTenantName] = useState<string | null>(null);
+    const [isSuspended, setIsSuspended] = useState(false);
 
     // Listen for Cmd+K or Ctrl+K globally
     useEffect(() => {
@@ -65,7 +82,7 @@ export default function AdminDashboard() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []);
 
-    async function handleExecuteCommand(action: string, data: any): Promise<boolean> {
+    async function handleExecuteCommand(action: string, data: any): Promise<boolean | any> {
         try {
             if (action === 'ADD_INGREDIENT') {
                 const { name, cost_per_unit, stock_level, unit_of_measure } = data;
@@ -135,6 +152,109 @@ export default function AdminDashboard() {
                 return true;
             }
             
+            if (action === 'MODIFY_STOCK') {
+                const { item_name, quantity, change_type, purchase_cost, batch_number, note } = data;
+                if (!item_name) return false;
+                
+                let targetItem = items.find((i: any) => i.name.toLowerCase() === item_name.toLowerCase());
+                if (!targetItem) {
+                    targetItem = items.find((i: any) => i.name.toLowerCase().includes(item_name.toLowerCase()));
+                }
+                
+                if (!targetItem) {
+                    throw new Error(lang === 'es' 
+                        ? `No se encontró el ingrediente "${item_name}" en el inventario.` 
+                        : `Ingredient "${item_name}" not found in inventory.`);
+                }
+                
+                const qty = parseFloat(quantity);
+                if (isNaN(qty) || qty <= 0) {
+                    throw new Error(lang === 'es' ? 'La cantidad debe ser un número positivo.' : 'Quantity must be a positive number.');
+                }
+                
+                const currentLevel = targetItem.stock_level || 0;
+                let newLevel: number;
+                let logEntry: any = { item_id: targetItem.id, note: note || null };
+                let newCostPerUnit: number | null = null;
+                
+                if (change_type === 'restock') {
+                    newLevel = currentLevel + qty;
+                    logEntry.quantity_added = qty;
+                    logEntry.quantity_removed = 0;
+                    logEntry.change_type = 'restock';
+                    
+                    const purchCost = parseFloat(purchase_cost);
+                    if (!isNaN(purchCost) && purchCost > 0) {
+                        const oldCost = targetItem.cost_per_unit || 0;
+                        const oldTotal = currentLevel * oldCost;
+                        const newTotal = qty * purchCost;
+                        newCostPerUnit = newLevel > 0 ? parseFloat(((oldTotal + newTotal) / newLevel).toFixed(4)) : purchCost;
+                        logEntry.purchase_cost = purchCost;
+                        logEntry.note = (note ? note + ' | ' : '') + `Cost: $${purchCost}/unit → Avg: $${newCostPerUnit}/unit`;
+                    }
+                    if (batch_number) {
+                        logEntry.batch_number = String(batch_number).trim();
+                    }
+                } else if (change_type === 'waste') {
+                    newLevel = Math.max(0, currentLevel - qty);
+                    logEntry.quantity_added = 0;
+                    logEntry.quantity_removed = qty;
+                    logEntry.change_type = 'waste';
+                } else {
+                    newLevel = qty;
+                    const diff = qty - currentLevel;
+                    logEntry.quantity_added = diff > 0 ? diff : 0;
+                    logEntry.quantity_removed = diff < 0 ? Math.abs(diff) : 0;
+                    logEntry.change_type = 'adjustment';
+                }
+                
+                const updatePayload: any = { stock_level: newLevel };
+                if (newCostPerUnit !== null) updatePayload.cost_per_unit = newCostPerUnit;
+                
+                const { error: updateError } = await supabase.from('items').update(updatePayload).eq('id', targetItem.id);
+                if (updateError) throw updateError;
+                
+                const { error: logError } = await supabase.from('inventory_logs').insert([logEntry]);
+                if (logError) throw logError;
+                
+                await refreshInventory();
+                await refreshLogs();
+                return true;
+            }
+
+            if (action === 'GENERATE_EXCEL') {
+                const reportType = data.report_type || 'pnl';
+                const dateRange = data.date_range || 'month';
+                const res = await generateExcelReport(supabase, reportType, dateRange);
+                if (!res.success) {
+                    throw new Error(res.message);
+                }
+                return true;
+            }
+
+            if (action === 'ANALYZE_RECIPE_COST') {
+                return await analyzeRecipeCost(supabase, data.target_dish);
+            }
+
+            if (action === 'DRAFT_PURCHASE_ORDER') {
+                return await draftPurchaseOrders(supabase, data.supplier_name);
+            }
+
+            if (action === 'PREDICT_STAFFING') {
+                return await predictStaffingRequirements(supabase, data.target_day);
+            }
+
+            if (action === 'ANALYZE_SLOW_STOCK') {
+                return await analyzeSlowInventory(supabase);
+            }
+
+            if (action === 'TOGGLE_ITEM_AVAILABILITY') {
+                const isAvail = data.is_available !== undefined ? data.is_available : false;
+                const res = await toggleItemAvailability(supabase, data.target_dish, isAvail);
+                await refreshInventory();
+                return res;
+            }
+            
             return false;
         } catch (err) {
             console.error('Error executing AI command:', err);
@@ -158,15 +278,29 @@ export default function AdminDashboard() {
     const [currentUser, setCurrentUser] = useState<{ id: string; full_name: string; role: Role } | null>(null);
 
     useEffect(() => {
+        const storedTenantId = localStorage.getItem('pos_tenant_id');
+        const storedTenantName = localStorage.getItem('pos_tenant_name');
+        setSelectedTenantId(storedTenantId);
+        setSelectedTenantName(storedTenantName);
+
         const stored = localStorage.getItem('pos_user');
         if (!stored) { router.replace('/login'); return; }
         try {
             const u = JSON.parse(stored);
+            const userRole = u.role as Role;
             setCurrentUser({ 
                 id: u.id, 
                 full_name: u.full_name || `${u.nombre || ''} ${u.apellido || ''}`.trim() || u.username, 
-                role: u.role as Role 
+                role: userRole 
             });
+
+            // Only run loadAll if we are NOT a system_admin needing to select a tenant, 
+            // OR if a tenant is already selected.
+            if (userRole !== 'system_admin' || storedTenantId) {
+                loadAll();
+            } else {
+                setLoading(false); // Skip loadAll and show selector
+            }
         } catch {
             router.replace('/login');
         }
@@ -177,7 +311,10 @@ export default function AdminDashboard() {
         localStorage.removeItem('pos_tenant_id');
         localStorage.removeItem('pos_tenant_name');
         localStorage.removeItem('pos_tenant_subdomain');
-        document.cookie = 'pos_tenant_id=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+        localStorage.removeItem('pos_login_tenant_id');
+        localStorage.removeItem('pos_login_tenant_name');
+        localStorage.removeItem('pos_login_tenant_subdomain');
+        document.cookie = 'pos_tenant_id=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT; SameSite=Lax;';
         router.replace('/login');
     }
 
@@ -215,7 +352,7 @@ export default function AdminDashboard() {
     }
 
     async function deletePrinter(id: string) {
-        if (!confirm('Are you sure you want to delete this printer? Assure no stations are actively using it.')) return;
+        if (!confirm(lang === 'es' ? '¿Está seguro de que desea eliminar esta impresora? Asegúrese de que ninguna estación la esté usando.' : 'Are you sure you want to delete this printer? Assure no stations are actively using it.')) return;
         await supabase.from('printers').delete().eq('id', id);
         setPrinters(prev => prev.filter(p => p.id !== id));
     }
@@ -244,7 +381,7 @@ export default function AdminDashboard() {
     async function createUser() {
         setUserSaving(true); setUserFormError('');
         if (!newUserUsername || !newUserPassword || !newUserNombre || !newUserApellido) {
-            setUserFormError('Username, password, first name and last name are required.');
+            setUserFormError(lang === 'es' ? 'El nombre de usuario, contraseña, nombre y apellido son obligatorios.' : 'Username, password, first name and last name are required.');
             setUserSaving(false); return;
         }
         const { error } = await supabase.from('usuarios').insert([{
@@ -271,18 +408,26 @@ export default function AdminDashboard() {
     }
 
     async function deleteUser(id: string) {
-        if (!confirm('Delete this user permanently?')) return;
+        if (!confirm(lang === 'es' ? '¿Eliminar este usuario permanentemente?' : 'Delete this user permanently?')) return;
         await supabase.from('usuarios').delete().eq('id', id);
         setStaffList(prev => prev.filter(u => u.id !== id));
     }
 
     // ─── load ────────────────────────────────────────────────────────────────
-    useEffect(() => { loadAll(); }, []);
-    useEffect(() => { if (tab === 'users') loadStaff(); }, [tab]);
+    useEffect(() => { if (tab === 'users' && (currentUser?.role !== 'system_admin' || selectedTenantId)) loadStaff(); }, [tab]);
 
     async function loadAll() {
         setLoading(true);
-        const [ir, cr, tr, sr, pr, tickR, logR, setR, supR, zoneR] = await Promise.all([
+        const tenantId = typeof window !== 'undefined' ? localStorage.getItem('pos_tenant_id') : null;
+        const storedUser = typeof window !== 'undefined' ? localStorage.getItem('pos_user') : null;
+        let userRole = '';
+        if (storedUser) {
+            try {
+                userRole = JSON.parse(storedUser).role;
+            } catch (e) {}
+        }
+
+        const promises: any[] = [
             supabase.from('items').select('*, item_categories(category_id)').order('name'),
             supabase.from('categories').select('*').order('display_order'),
             supabase.from('tables').select('*').order('name'),
@@ -293,7 +438,43 @@ export default function AdminDashboard() {
             supabase.from('restaurant_settings').select('*').limit(1),
             supabase.from('suppliers').select('*').order('name'),
             supabase.from('table_zones').select('*').order('display_order'),
-        ]);
+        ];
+
+        if (tenantId) {
+            promises.push(
+                (supabase.from('tenants')
+                    .select('active')
+                    .eq('id', tenantId)
+                    .maybeSingle() as any)
+                    .then((res: any) => {
+                        if (res.error) return { data: { active: true } };
+                        return res;
+                    })
+                    .catch(() => ({ data: { active: true } }))
+            );
+        }
+
+        const results = await Promise.all(promises);
+        const ir = results[0];
+        const cr = results[1];
+        const tr = results[2];
+        const sr = results[3];
+        const pr = results[4];
+        const tickR = results[5];
+        const logR = results[6];
+        const setR = results[7];
+        const supR = results[8];
+        const zoneR = results[9];
+        const tenantRes = tenantId ? results[10] : null;
+
+        if (tenantRes && tenantRes.data) {
+            if (tenantRes.data.active === false) {
+                setIsSuspended(true);
+            } else {
+                setIsSuspended(false);
+            }
+        }
+
         setItems(ir.data || []);
         setCategories(cr.data || []);
         setTables(tr.data || []);
@@ -325,6 +506,7 @@ export default function AdminDashboard() {
     // ─── realtime for KDS & INVENTORY ─────────────────────────────────────────
     useEffect(() => {
         const tenantId = typeof window !== 'undefined' ? localStorage.getItem('pos_tenant_id') : null;
+        if (!tenantId) return; // Skip if no tenant is active
         const filterStr = tenantId ? `tenant_id=eq.${tenantId}` : undefined;
 
         const channel = supabase.channel('dashboard-live')
@@ -334,7 +516,7 @@ export default function AdminDashboard() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_logs', filter: filterStr }, () => refreshLogs())
             .subscribe();
         return () => { supabase.removeChannel(channel); };
-    }, []);
+    }, [selectedTenantId]);
 
     async function refreshInventory() {
         const { data } = await supabase.from('items').select('*, item_categories(category_id)').order('name');
@@ -487,16 +669,20 @@ export default function AdminDashboard() {
 
     const lang = settings?.language || 'es';
     const ALL_TABS: { id: Tab; label: string; roles: Role[] }[] = [
-        { id: 'menu', label: '🍽 ' + t('sidebar.menu', lang), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'inventory', label: '📦 ' + t('sidebar.inventory', lang), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'tables', label: '🪑 ' + t('sidebar.tables', lang), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'kitchen', label: '👨‍🍳 ' + t('sidebar.orders', lang), roles: ['super_admin', 'owner', 'admin', 'estacion'] },
-        { id: 'reports', label: '📈 ' + (lang === 'es' ? 'Reportes' : 'Reports'), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'promotions', label: '🏷️ ' + t('sidebar.promotions', lang), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'attendance', label: '⏰ ' + (lang === 'es' ? 'Asistencia' : 'Attendance'), roles: ['super_admin', 'owner', 'admin'] },
-        { id: 'payroll', label: '💰 ' + (lang === 'es' ? 'Nómina' : 'Payroll'), roles: ['super_admin', 'owner'] },
-        { id: 'users', label: '👥 ' + t('sidebar.staff', lang), roles: ['super_admin', 'owner'] },
-        { id: 'settings', label: '⚙️ ' + t('sidebar.settings', lang), roles: ['super_admin'] },
+        { id: 'ai', label: '🤖 ' + (lang === 'es' ? 'Asistente IA' : 'AI Assistant'), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'menu', label: '🍽 ' + t('sidebar.menu', lang), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'inventory', label: '📦 ' + t('sidebar.inventory', lang), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'tables', label: '🪑 ' + t('sidebar.tables', lang), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'kitchen', label: '👨‍🍳 ' + t('sidebar.orders', lang), roles: ['system_admin', 'super_admin', 'owner', 'admin', 'estacion'] },
+        { id: 'reports', label: '📈 ' + (lang === 'es' ? 'Reportes' : 'Reports'), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'caja', label: '💵 ' + (lang === 'es' ? 'Caja' : 'Cash Drawer'), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'promotions', label: '🏷️ ' + t('sidebar.promotions', lang), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'attendance', label: '⏰ ' + (lang === 'es' ? 'Asistencia' : 'Attendance'), roles: ['system_admin', 'super_admin', 'owner', 'admin'] },
+        { id: 'payroll', label: '💰 ' + (lang === 'es' ? 'Nómina' : 'Payroll'), roles: ['system_admin', 'super_admin', 'owner'] },
+        { id: 'expenses', label: '💸 ' + t('sidebar.expenses', lang), roles: ['system_admin', 'super_admin', 'owner'] },
+        { id: 'users', label: '👥 ' + t('sidebar.staff', lang), roles: ['system_admin', 'super_admin', 'owner'] },
+        { id: 'settings', label: '⚙️ ' + t('sidebar.settings', lang), roles: ['system_admin', 'super_admin'] },
+        { id: 'tenants', label: '🏢 ' + t('sidebar.tenants', lang), roles: ['system_admin'] },
     ];
     const TABS = currentUser ? ALL_TABS.filter(t => t.roles.includes(currentUser.role)) : [];
 
@@ -513,19 +699,76 @@ export default function AdminDashboard() {
 
     const menuCategories = categories.filter((c: any) => c.type === 'menu');
     // ─── render ───────────────────────────────────────────────────────────────
+    if (isSuspended && currentUser?.role !== 'system_admin') {
+        return (
+            <div className="min-h-screen w-screen flex flex-col items-center justify-center p-6 bg-[#f5f5f7] text-[#1d1d1f] font-sans relative">
+                <motion.div 
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4 }}
+                    className="max-w-md w-full bg-white border border-[#d2d2d7]/50 rounded-2xl p-8 shadow-[0_4px_20px_rgba(0,0,0,0.03)] text-center space-y-6"
+                >
+                    <div className="text-4xl mx-auto">
+                        ⚠️
+                    </div>
+
+                    <div className="space-y-2">
+                        <h2 className="text-2xl font-bold tracking-tight text-[#1d1d1f]">
+                            {lang === 'es' ? 'Cuenta Suspendida' : 'Account Suspended'}
+                        </h2>
+                        <p className="text-sm text-[#86868b] font-medium leading-relaxed">
+                            {lang === 'es' 
+                                ? 'Esta cuenta de restaurante ha sido suspendida debido a falta de pago de la suscripción mensual. Por favor contacte al administrador del sistema o soporte técnico.'
+                                : 'This restaurant account is suspended due to unpaid subscription. Please contact support or the system administrator.'}
+                        </p>
+                    </div>
+
+                    <div className="pt-6 border-t border-[#f5f5f7] flex flex-col gap-2">
+                        <button
+                            onClick={signOut}
+                            className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-full bg-[#1d1d1f] hover:bg-[#333336] text-white font-semibold text-sm transition cursor-pointer active:scale-98"
+                        >
+                            {lang === 'es' ? 'Cerrar Sesión' : 'Sign Out'}
+                        </button>
+                    </div>
+                </motion.div>
+            </div>
+        );
+    }
+
+    if (currentUser?.role === 'system_admin' && !selectedTenantId) {
+        return (
+            <TenantSelector
+                onSelectTenant={(tenant) => {
+                    localStorage.setItem('pos_tenant_id', tenant.id);
+                    localStorage.setItem('pos_tenant_name', tenant.name);
+                    localStorage.setItem('pos_tenant_subdomain', tenant.subdomain);
+                    document.cookie = `pos_tenant_id=${tenant.id}; path=/; max-age=31536000; SameSite=Lax`;
+                    window.location.reload();
+                }}
+                onSignOut={signOut}
+                lang={lang}
+            />
+        );
+    }
+
     return (
         <div className="h-screen flex bg-slate-50 dark:bg-slate-950 overflow-hidden font-sans">
             {/* Left Sidebar */}
             <aside className="w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col shrink-0 relative z-20 shadow-sm">
                 {/* Logo Area */}
-                <div className="h-20 flex items-center px-6 border-b border-gray-100">
+                <div className="h-20 flex items-center px-6 border-b border-gray-100 dark:border-slate-800">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-primary-500 rounded-2xl flex items-center justify-center shadow-sm">
                             <span className="text-white font-black text-sm">OS</span>
                         </div>
-                        <div>
-                            <h1 className="font-extrabold text-gray-900 dark:text-gray-100 text-lg leading-tight">Restaurant</h1>
-                            <p className="text-xs font-semibold text-gray-400">Admin Panel</p>
+                        <div className="min-w-0 flex-1">
+                            <h1 className="font-extrabold text-gray-900 dark:text-gray-100 text-base leading-tight truncate">
+                                {selectedTenantName || 'Restaurant'}
+                            </h1>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                {currentUser?.role === 'system_admin' ? (lang === 'es' ? 'Admin del Sistema' : 'System Admin') : (lang === 'es' ? 'Panel de Control' : 'Admin Panel')}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -541,7 +784,9 @@ export default function AdminDashboard() {
                         <span className="truncate">{lang === 'es' ? 'Asistente IA (Cmd+K)' : 'AI Assistant (Cmd+K)'}</span>
                     </button>
 
-                    <p className="px-3 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Main Menu</p>
+                    <p className="px-3 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                        {lang === 'es' ? 'Menú Principal' : 'Main Menu'}
+                    </p>
                     {TABS.map(t => (
                         <button key={t.id} onClick={() => setTab(t.id)}
                             className={`w-full flex items-center justify-between px-4 py-3 text-sm font-bold rounded-2xl transition-all ${tab === t.id ? 'bg-primary-50 text-primary-700 shadow-[inset_0_0_0_1px_rgba(20,184,166,0.1)]' : 'bg-transparent text-gray-500 dark:text-gray-400 hover:bg-gray-50 hover:text-gray-900 dark:hover:text-gray-100'}`}>
@@ -555,13 +800,35 @@ export default function AdminDashboard() {
 
                 {/* User Profile Footer */}
                 {currentUser && (
-                    <div className="p-4 border-t border-gray-100">
-                        <div className="flex justify-between items-center px-2 py-1 mb-2">
+                    <div className="p-4 border-t border-gray-100 dark:border-slate-800 flex flex-col gap-3">
+                        {currentUser.role === 'system_admin' && selectedTenantName && (
+                            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl border border-slate-100 dark:border-slate-800/80">
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                    {lang === 'es' ? 'Sucursal Activa' : 'Active Branch'}
+                                </p>
+                                <p className="text-xs font-black text-slate-800 dark:text-slate-200 truncate">
+                                    🏢 {selectedTenantName}
+                                </p>
+                                <button 
+                                    onClick={() => {
+                                        localStorage.removeItem('pos_tenant_id');
+                                        localStorage.removeItem('pos_tenant_name');
+                                        localStorage.removeItem('pos_tenant_subdomain');
+                                        document.cookie = `pos_tenant_id=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT; SameSite=Lax`;
+                                        window.location.reload();
+                                    }}
+                                    className="w-full mt-2 inline-flex items-center justify-center gap-1.5 text-[10px] font-black text-primary-600 dark:text-primary-400 hover:text-primary-700 bg-primary-500/5 hover:bg-primary-500/10 py-1.5 rounded-xl transition cursor-pointer"
+                                >
+                                    🔄 {lang === 'es' ? 'Cambiar Sucursal' : 'Switch Branch'}
+                                </button>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center px-2 py-1">
                             <div className="truncate pr-2">
                                 <p className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">{currentUser.full_name}</p>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{currentUser.role.replace('_', ' ')}</p>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{formatRole(currentUser.role, lang)}</p>
                             </div>
-                            <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-xl font-bold text-gray-500 dark:text-gray-400 bg-gray-50 hover:bg-red-50 hover:text-red-600 transition-colors">
+                            <button onClick={signOut} className="text-xs px-3 py-1.5 rounded-xl font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-850 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer">
                                 {t('sidebar.logout', lang)}
                             </button>
                         </div>
@@ -571,6 +838,12 @@ export default function AdminDashboard() {
 
             {/* Main Content Area */}
             <main className="flex-1 overflow-y-auto">
+                {isSuspended && currentUser?.role === 'system_admin' && (
+                    <div className="bg-red-50 border-b border-red-100 text-red-800 px-6 py-3 flex items-center justify-between text-xs font-bold uppercase tracking-wider">
+                        <span>⚠️ {lang === 'es' ? 'Esta sucursal está suspendida por falta de pago' : 'This branch is currently suspended for unpaid subscription'}</span>
+                        <span className="bg-red-200/50 text-red-900 px-2 py-0.5 rounded text-[10px]">{lang === 'es' ? 'VISTA ADMIN' : 'ADMIN VIEW'}</span>
+                    </div>
+                )}
                 <div className="max-w-7xl mx-auto px-10 py-10">
                     {loading ? (
                         <div className="flex items-center justify-center py-32">
@@ -578,6 +851,17 @@ export default function AdminDashboard() {
                         </div>
                     ) : (
                         <>
+                            {/* ══════════ AI ASSISTANT TAB ══════════ */}
+                            {tab === 'ai' && (
+                                <AIAssistantTab
+                                    lang={settings?.language || 'es'}
+                                    onRunPrompt={(pText: string) => {
+                                        setCommandPrompt(pText);
+                                        setIsCommandBarOpen(true);
+                                    }}
+                                />
+                            )}
+
                             {/* ══════════ MENU TAB ══════════ */}
                             {tab === 'menu' && (
                                 <CategoriesTab
@@ -664,7 +948,7 @@ export default function AdminDashboard() {
 
                             {/* ══════════ USERS TAB ══════════ */}
                             {tab === 'users' && (
-                                <UsersTab supabase={supabase} lang={settings?.language || 'es'} />
+                                <UsersTab supabase={supabase} lang={settings?.language || 'es'} currentUser={currentUser} />
                             )}
 
                             {/* ══════════ ATTENDANCE TAB ══════════ */}
@@ -682,6 +966,14 @@ export default function AdminDashboard() {
                                     lang={settings?.language || 'es'}
                                 />
                             )}
+
+                            {/* ══════════ TENANTS TAB ══════════ */}
+                            {tab === 'tenants' && (
+                                <TenantsTab
+                                    currentUser={currentUser}
+                                    lang={settings?.language || 'es'}
+                                />
+                            )}
                         </>
                     )}
                 </div>
@@ -690,13 +982,26 @@ export default function AdminDashboard() {
                                 <ReportsTab supabase={supabase} lang={settings?.language || 'es'} fmtCurrency={fmtCurrency} />
                             )}
 
+                {tab === 'caja' && (
+                                <CajaTab supabase={supabase} currentUser={currentUser} lang={settings?.language || 'es'} fmtCurrency={fmtCurrency} />
+                            )}
+
+                {tab === 'expenses' && (
+                                <ExpensesTab supabase={supabase} lang={settings?.language || 'es'} fmtCurrency={fmtCurrency} />
+                            )}
+
             </main >
 
-            <CommandBar 
+            {/* Command Bar Modal */}
+            <CommandBar
                 isOpen={isCommandBarOpen}
-                onClose={() => setIsCommandBarOpen(false)}
+                onClose={() => {
+                    setIsCommandBarOpen(false);
+                    setCommandPrompt('');
+                }}
                 onExecute={handleExecuteCommand}
-                lang={settings?.language || 'es'}
+                lang={lang}
+                initialPrompt={commandPrompt}
             />
         </div >
     );

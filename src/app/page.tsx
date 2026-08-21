@@ -3,6 +3,8 @@
 // Redirect to /login is handled by Dashboard.tsx on mount.
 import Dashboard from './Dashboard';
 
+export const dynamic = 'force-dynamic';
+
 export default function Page() {
   return <Dashboard />;
 }

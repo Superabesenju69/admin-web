@@ -10,6 +10,7 @@ const supabase = createBrowserClient(
 
 export default function LoginPage() {
     const router = useRouter();
+    const [subdomain, setSubdomain] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -20,31 +21,141 @@ export default function LoginPage() {
         setLoading(true);
         setError('');
 
-        const { data, error: dbErr } = await supabase
-            .from('usuarios')
-            .select('id, username, nombre, apellido, role, active')
-            .eq('username', username.trim().toLowerCase())
-            .eq('password', password)
-            .single();
+        const cleanUsername = username.trim().toLowerCase();
+        let finalTenantData: any = null;
+        let finalUserData: any = null;
 
-        if (dbErr || !data) {
-            setError('Invalid username or password.');
-            setLoading(false);
-            return;
+        // 1. First check if it is a global system admin
+        const { data: globalAdminData } = await supabase
+            .from('usuarios')
+            .select('id, username, nombre, apellido, role, active, tenant_id')
+            .eq('username', cleanUsername)
+            .eq('password', password)
+            .eq('role', 'system_admin')
+            .maybeSingle();
+
+        if (globalAdminData) {
+            // Found a global system admin user! Fetch their tenant details
+            let { data: tenantData, error: tenantErr } = await supabase
+                .from('tenants')
+                .select('id, name, subdomain, active')
+                .eq('id', globalAdminData.tenant_id)
+                .single();
+
+            if (tenantErr) {
+                // Fallback query if 'active' column is missing
+                const fallbackRes = await supabase
+                    .from('tenants')
+                    .select('id, name, subdomain')
+                    .eq('id', globalAdminData.tenant_id)
+                    .single();
+                
+                if (fallbackRes.error) {
+                    setError('Failed to resolve system admin restaurant tenant.');
+                    setLoading(false);
+                    return;
+                }
+                tenantData = { ...fallbackRes.data, active: true };
+            }
+
+            finalTenantData = tenantData;
+            finalUserData = globalAdminData;
+        } else {
+            // Not a system admin. Require subdomain.
+            if (!subdomain.trim()) {
+                setError('Restaurant Code (Subdomain) is required for staff accounts.');
+                setLoading(false);
+                return;
+            }
+
+            // Standard scoped tenant authentication flow
+            let { data: tenantData, error: tenantErr } = await supabase
+                .from('tenants')
+                .select('id, name, subdomain, active')
+                .eq('subdomain', subdomain.trim().toLowerCase())
+                .single();
+
+            if (tenantErr) {
+                // Fallback query if 'active' column is missing
+                const fallbackRes = await supabase
+                    .from('tenants')
+                    .select('id, name, subdomain')
+                    .eq('subdomain', subdomain.trim().toLowerCase())
+                    .single();
+                
+                if (fallbackRes.error) {
+                    setError('Invalid restaurant code / subdomain.');
+                    setLoading(false);
+                    return;
+                }
+                tenantData = { ...fallbackRes.data, active: true };
+            }
+
+            const tempSupabase = createBrowserClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                {
+                    global: {
+                        headers: {
+                            'x-tenant-id': tenantData?.id || ''
+                        }
+                    }
+                }
+            );
+
+            const { data: userData, error: dbErr } = await tempSupabase
+                .from('usuarios')
+                .select('id, username, nombre, apellido, role, active')
+                .eq('username', cleanUsername)
+                .eq('password', password)
+                .single();
+
+            if (dbErr || !userData) {
+                setError('Invalid username or password.');
+                setLoading(false);
+                return;
+            }
+
+            finalTenantData = tenantData;
+            finalUserData = userData;
         }
-        if (!data.active) {
+
+        if (!finalUserData.active) {
             setError('Your account is inactive. Contact your manager.');
             setLoading(false);
             return;
         }
 
+        // Check if tenant is suspended and user is not system admin
+        if (finalTenantData.active === false && finalUserData.role !== 'system_admin') {
+            setError('This restaurant account is suspended due to unpaid subscription. Please contact support.');
+            setLoading(false);
+            return;
+        }
+
         // Store session in localStorage (simple MVP approach)
+        localStorage.setItem('pos_login_tenant_id', finalTenantData.id);
+        localStorage.setItem('pos_login_tenant_name', finalTenantData.name);
+        localStorage.setItem('pos_login_tenant_subdomain', finalTenantData.subdomain);
         localStorage.setItem('pos_user', JSON.stringify({
-            id: data.id,
-            username: data.username,
-            full_name: `${data.nombre} ${data.apellido}`,
-            role: data.role,
+            id: finalUserData.id,
+            username: finalUserData.username,
+            full_name: `${finalUserData.nombre} ${finalUserData.apellido}`,
+            role: finalUserData.role,
         }));
+
+        if (finalUserData.role === 'system_admin') {
+            // System admins land on the branch selector, so we clear the active tenant
+            localStorage.removeItem('pos_tenant_id');
+            localStorage.removeItem('pos_tenant_name');
+            localStorage.removeItem('pos_tenant_subdomain');
+            document.cookie = `pos_tenant_id=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT; SameSite=Lax`;
+        } else {
+            localStorage.setItem('pos_tenant_id', finalTenantData.id);
+            localStorage.setItem('pos_tenant_name', finalTenantData.name);
+            localStorage.setItem('pos_tenant_subdomain', finalTenantData.subdomain);
+            document.cookie = `pos_tenant_id=${finalTenantData.id}; path=/; max-age=31536000; SameSite=Lax`;
+        }
 
         router.replace('/');
     };
@@ -90,6 +201,23 @@ export default function LoginPage() {
                         {error}
                     </div>
                 )}
+
+                <div style={{ marginBottom: 20 }}>
+                    <label style={{ display: 'block', color: '#94a3b8', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                        Restaurant Code (Optional for System Admin)
+                    </label>
+                    <input
+                        type="text"
+                        value={subdomain}
+                        onChange={e => setSubdomain(e.target.value)}
+                        placeholder="central"
+                        style={{
+                            width: '100%', padding: '14px 16px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.12)',
+                            background: 'rgba(255,255,255,0.07)', color: '#fff', fontSize: 15,
+                            outline: 'none', boxSizing: 'border-box',
+                        }}
+                    />
+                </div>
 
                 <div style={{ marginBottom: 20 }}>
                     <label style={{ display: 'block', color: '#94a3b8', fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
