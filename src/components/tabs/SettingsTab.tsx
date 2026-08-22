@@ -14,6 +14,7 @@ interface SettingsTabProps {
 
 const DEFAULT_TEMPLATE = {
     logo_url: '',
+    logo_size: 'medium', // 'small' (32px), 'medium' (48px), 'large' (64px), 'xlarge' (80px)
     header_lines: [
         "EL GAUCHO STEAKHOUSE",
         "KM 4.5 Carretera Masaya",
@@ -30,7 +31,12 @@ const DEFAULT_TEMPLATE = {
     show_tax_breakdown: true,
     show_promotion_discounts: true,
     alignment: 'center',
-    paper_width: '80mm'
+    paper_width: '80mm',
+    font_family: 'classic', // 'classic' (Monospace), 'modern' (Sans), 'condensed' (Compact), 'serif' (Serif)
+    font_size: 'normal', // 'compact', 'normal', 'large'
+    header_format: 'bold_uppercase', // 'bold_uppercase', 'bold', 'normal'
+    divider_style: 'dashes', // 'dashes', 'equals', 'dots', 'stars'
+    line_spacing: 'normal', // 'compact', 'normal', 'relaxed'
 };
 
 export default function SettingsTab({
@@ -81,6 +87,7 @@ export default function SettingsTab({
     // Receipt Customizer State
     const template = settings?.receipt_template || DEFAULT_TEMPLATE;
     const [logoUrl, setLogoUrl] = useState(template.logo_url || '');
+    const [logoSize, setLogoSize] = useState(template.logo_size || 'medium');
     const [headerLines, setHeaderLines] = useState<string[]>(template.header_lines || []);
     const [footerLines, setFooterLines] = useState<string[]>(template.footer_lines || []);
     const [showServerName, setShowServerName] = useState(!!template.show_server_name);
@@ -89,11 +96,17 @@ export default function SettingsTab({
     const [showPromotionDiscounts, setShowPromotionDiscounts] = useState(!!template.show_promotion_discounts);
     const [alignment, setAlignment] = useState(template.alignment || 'center');
     const [paperWidth, setPaperWidth] = useState(template.paper_width || '80mm');
+    const [fontFamily, setFontFamily] = useState(template.font_family || 'classic');
+    const [fontSize, setFontSize] = useState(template.font_size || 'normal');
+    const [headerFormat, setHeaderFormat] = useState(template.header_format || 'bold_uppercase');
+    const [dividerStyle, setDividerStyle] = useState(template.divider_style || 'dashes');
+    const [lineSpacing, setLineSpacing] = useState(template.line_spacing || 'normal');
 
     useEffect(() => {
         if (settings?.receipt_template) {
             const t = settings.receipt_template;
             setLogoUrl(t.logo_url || '');
+            setLogoSize(t.logo_size || 'medium');
             setHeaderLines(t.header_lines || []);
             setFooterLines(t.footer_lines || []);
             setShowServerName(t.show_server_name !== false);
@@ -102,6 +115,11 @@ export default function SettingsTab({
             setShowPromotionDiscounts(t.show_promotion_discounts !== false);
             setAlignment(t.alignment || 'center');
             setPaperWidth(t.paper_width || '80mm');
+            setFontFamily(t.font_family || 'classic');
+            setFontSize(t.font_size || 'normal');
+            setHeaderFormat(t.header_format || 'bold_uppercase');
+            setDividerStyle(t.divider_style || 'dashes');
+            setLineSpacing(t.line_spacing || 'normal');
         }
     }, [settings?.receipt_template]);
 
@@ -200,6 +218,7 @@ export default function SettingsTab({
         setSaving(true);
         const updatedTemplate = {
             logo_url: logoUrl.trim(),
+            logo_size: logoSize,
             header_lines: headerLines.map(l => l.trim()).filter(l => l !== ''),
             footer_lines: footerLines.map(l => l.trim()).filter(l => l !== ''),
             show_server_name: showServerName,
@@ -207,7 +226,12 @@ export default function SettingsTab({
             show_tax_breakdown: showTaxBreakdown,
             show_promotion_discounts: showPromotionDiscounts,
             alignment,
-            paper_width: paperWidth
+            paper_width: paperWidth,
+            font_family: fontFamily,
+            font_size: fontSize,
+            header_format: headerFormat,
+            divider_style: dividerStyle,
+            line_spacing: lineSpacing
         };
 
         const { error } = await supabase.from('restaurant_settings')
@@ -448,6 +472,112 @@ export default function SettingsTab({
                                     placeholder="https://example.com/logo.png"
                                     className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100"
                                 />
+
+                                {/* Logo Size Selector */}
+                                <div className="pt-2">
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Tamaño del Logotipo' : 'Logo / Image Size'}</label>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {[
+                                            { id: 'small', label: lang === 'es' ? 'Pequeño' : 'Small', sub: '32px' },
+                                            { id: 'medium', label: lang === 'es' ? 'Mediano' : 'Medium', sub: '48px' },
+                                            { id: 'large', label: lang === 'es' ? 'Grande' : 'Large', sub: '64px' },
+                                            { id: 'xlarge', label: lang === 'es' ? 'Extra' : 'X-Large', sub: '80px' }
+                                        ].map((sz) => (
+                                            <button
+                                                key={sz.id}
+                                                type="button"
+                                                onClick={() => setLogoSize(sz.id)}
+                                                className={`px-2 py-2 text-xs font-bold rounded-xl border transition-all text-center flex flex-col items-center justify-center ${
+                                                    logoSize === sz.id
+                                                        ? 'bg-primary-600 text-white border-primary-600 shadow-md shadow-primary-500/20 scale-[1.02]'
+                                                        : 'bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800'
+                                                }`}
+                                            >
+                                                <span>{sz.label}</span>
+                                                <span className={`text-[10px] font-normal ${logoSize === sz.id ? 'text-primary-100' : 'text-gray-400'}`}>{sz.sub}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Typography & Text Formatting Card */}
+                        <div className="p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50/70 dark:bg-slate-800/30 space-y-4">
+                            <h4 className="text-xs font-black text-gray-800 dark:text-gray-200 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>🔤</span>
+                                <span>{lang === 'es' ? 'Formato de Texto y Tipografía' : 'Typography & Text Formatting'}</span>
+                            </h4>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Estilo de Fuente' : 'Font Style'}</label>
+                                    <select
+                                        value={fontFamily}
+                                        onChange={e => setFontFamily(e.target.value)}
+                                        className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 cursor-pointer font-medium"
+                                    >
+                                        <option value="classic">{lang === 'es' ? 'Clásica Térmica (Monospace)' : 'Classic Thermal (Monospace)'}</option>
+                                        <option value="modern">{lang === 'es' ? 'Moderna Limpia (Sans-serif)' : 'Modern Clean (Sans-serif)'}</option>
+                                        <option value="condensed">{lang === 'es' ? 'Condensada (Compact / Font B)' : 'Condensed (Compact / Font B)'}</option>
+                                        <option value="serif">{lang === 'es' ? 'Elegante (Serif)' : 'Elegant (Serif)'}</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Tamaño de Letra Base' : 'Base Font Size'}</label>
+                                    <select
+                                        value={fontSize}
+                                        onChange={e => setFontSize(e.target.value)}
+                                        className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 cursor-pointer font-medium"
+                                    >
+                                        <option value="compact">{lang === 'es' ? 'Compacto (Pequeño 10px)' : 'Compact (Small 10px)'}</option>
+                                        <option value="normal">{lang === 'es' ? 'Normal (Estándar 12px)' : 'Normal (Standard 12px)'}</option>
+                                        <option value="large">{lang === 'es' ? 'Grande (Destacado 14px)' : 'Large (Prominent 14px)'}</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Énfasis de Encabezado' : 'Header Line Style'}</label>
+                                    <select
+                                        value={headerFormat}
+                                        onChange={e => setHeaderFormat(e.target.value)}
+                                        className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 cursor-pointer font-medium"
+                                    >
+                                        <option value="bold_uppercase">{lang === 'es' ? 'Negrita + MAYÚSCULAS' : 'Bold + UPPERCASE'}</option>
+                                        <option value="bold">{lang === 'es' ? 'Negrita Normal' : 'Bold Normal Case'}</option>
+                                        <option value="normal">{lang === 'es' ? 'Texto Regular' : 'Regular Normal Text'}</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Estilo de Separador' : 'Divider Style'}</label>
+                                    <select
+                                        value={dividerStyle}
+                                        onChange={e => setDividerStyle(e.target.value)}
+                                        className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 cursor-pointer font-mono text-xs"
+                                    >
+                                        <option value="dashes">-------------------- (Guiones / Dashes)</option>
+                                        <option value="equals">==================== (Doble / Equals)</option>
+                                        <option value="dots">.................... (Puntos / Dots)</option>
+                                        <option value="stars">******************** (Estrellas / Stars)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">{lang === 'es' ? 'Espaciado Vertical' : 'Line Density / Spacing'}</label>
+                                    <select
+                                        value={lineSpacing}
+                                        onChange={e => setLineSpacing(e.target.value)}
+                                        className="w-full border border-gray-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 cursor-pointer font-medium"
+                                    >
+                                        <option value="compact">{lang === 'es' ? 'Apretado / Compacto' : 'Tight / Compact'}</option>
+                                        <option value="normal">{lang === 'es' ? 'Normal / Estándar' : 'Normal / Standard'}</option>
+                                        <option value="relaxed">{lang === 'es' ? 'Espacioso / Holgado' : 'Relaxed / Spacious'}</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
 
@@ -606,104 +736,131 @@ export default function SettingsTab({
                     <div className="flex flex-col items-center justify-start bg-slate-100 dark:bg-slate-950 p-6 rounded-2xl border border-gray-200 dark:border-slate-800">
                         <span className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{lang === 'es' ? 'Vista Previa Térmica en Vivo' : 'Live Thermal Preview'}</span>
 
-                        {/* Receipt Roll */}
-                        <div
-                            className={`bg-[#fffff9] text-gray-900 p-6 shadow-md border-y-2 border-dashed border-gray-300 font-mono text-xs select-none transition-all duration-300 ${paperWidth === '58mm' ? 'w-[280px]' : 'w-[360px]'} flex flex-col`}
-                            style={{
-                                backgroundImage: 'radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.01) 100%)',
-                                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.05)'
-                            }}
-                        >
-                            {/* Logo rendering */}
-                            {logoUrl && logoUrl.trim() ? (
-                                <div className="flex justify-center mb-4">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={logoUrl.trim()} alt="Receipt logo" className="max-h-12 object-contain" />
-                                </div>
-                            ) : (
-                                <div className="text-center text-gray-300 text-3xl mb-2">🍽️</div>
-                            )}
+                        {(() => {
+                            const fontClass = fontFamily === 'modern' ? 'font-sans' : fontFamily === 'serif' ? 'font-serif' : fontFamily === 'condensed' ? 'font-mono tracking-tighter' : 'font-mono';
+                            const sizeClass = fontSize === 'compact' ? 'text-[10px]' : fontSize === 'large' ? 'text-sm' : 'text-xs';
+                            const spacingClass = lineSpacing === 'compact' ? 'space-y-0.5' : lineSpacing === 'relaxed' ? 'space-y-2' : 'space-y-1';
+                            const logoHeightClass = logoSize === 'small' ? 'max-h-8' : logoSize === 'large' ? 'max-h-16' : logoSize === 'xlarge' ? 'max-h-20' : 'max-h-12';
+                            const dividerChar = dividerStyle === 'equals' ? '=' : dividerStyle === 'dots' ? '.' : dividerStyle === 'stars' ? '*' : '-';
+                            const dividerCount = paperWidth === '58mm' ? 28 : 38;
 
-                            {/* Headers */}
-                            <div className={`mb-4 space-y-0.5 ${alignment === 'center' ? 'text-center' : 'text-left'}`}>
-                                {headerLines.map((line, idx) => (
-                                    <div key={idx} className={idx === 0 ? 'font-black text-sm uppercase' : 'text-[11px] text-gray-600'}>
-                                        {line}
+                            return (
+                                <div
+                                    className={`bg-[#fffff9] text-gray-900 p-6 shadow-md border-y-2 border-dashed border-gray-300 ${fontClass} ${sizeClass} select-none transition-all duration-300 ${paperWidth === '58mm' ? 'w-[280px]' : 'w-[360px]'} flex flex-col`}
+                                    style={{
+                                        backgroundImage: 'radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.01) 100%)',
+                                        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.05)'
+                                    }}
+                                >
+                                    {/* Logo rendering */}
+                                    {logoUrl && logoUrl.trim() ? (
+                                        <div className="flex justify-center mb-3">
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                            <img src={logoUrl.trim()} alt="Receipt logo" className={`${logoHeightClass} object-contain transition-all`} />
+                                        </div>
+                                    ) : (
+                                        <div className="text-center text-gray-300 text-3xl mb-2">🍽️</div>
+                                    )}
+
+                                    {/* Headers */}
+                                    <div className={`mb-3 ${spacingClass} ${alignment === 'center' ? 'text-center' : 'text-left'}`}>
+                                        {headerLines.map((line, idx) => {
+                                            const headerStyle = idx === 0
+                                                ? (headerFormat === 'bold_uppercase' ? 'font-black text-sm uppercase' : headerFormat === 'bold' ? 'font-bold text-sm' : 'font-normal text-sm')
+                                                : 'text-[11px] text-gray-600 dark:text-gray-400';
+                                            return (
+                                                <div key={idx} className={headerStyle}>
+                                                    {line}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                ))}
-                            </div>
 
-                            <div className="border-b border-dashed border-gray-300 my-2" />
-
-                            {/* Meta info */}
-                            <div className="text-[10px] text-gray-500 space-y-0.5">
-                                <div className="flex justify-between">
-                                    <span>ORDER: #4810</span>
-                                    {showOrderTimestamp && <span>30/05/2026 12:45 PM</span>}
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>TABLE: 14</span>
-                                    {showServerName && <span>WAITER: JANE SMITH</span>}
-                                </div>
-                            </div>
-
-                            <div className="border-b border-dashed border-gray-300 my-2" />
-
-                            {/* Items */}
-                            <div className="space-y-1.5 py-1">
-                                <div className="flex justify-between">
-                                    <span className="truncate">1x RIBEYE STEAK</span>
-                                    <span>C$680.00</span>
-                                </div>
-                                <div className="text-[10px] text-gray-500 ml-4">+ TERM: MEDIUM RARE</div>
-                                <div className="flex justify-between">
-                                    <span className="truncate">2x IMPERIAL BEER</span>
-                                    <span>C$160.00</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="truncate">1x FLAN DE COCO</span>
-                                    <span>C$120.00</span>
-                                </div>
-                            </div>
-
-                            <div className="border-b border-dashed border-gray-300 my-2" />
-
-                            {/* Totals */}
-                            <div className="space-y-1 text-[11px]">
-                                <div className="flex justify-between">
-                                    <span>SUBTOTAL</span>
-                                    <span>C$960.00</span>
-                                </div>
-
-                                {showPromotionDiscounts && (
-                                    <div className="flex justify-between text-red-600">
-                                        <span>DISCOUNTS (HAPPY HOUR)</span>
-                                        <span>-C$80.00</span>
+                                    {/* Divider */}
+                                    <div className="overflow-hidden whitespace-nowrap text-gray-400 text-center font-mono text-xs my-1 select-none">
+                                        {dividerChar.repeat(dividerCount)}
                                     </div>
-                                )}
 
-                                {showTaxBreakdown && (
-                                    <div className="flex justify-between text-gray-500">
-                                        <span>IVA (15%)</span>
-                                        <span>C$132.00</span>
+                                    {/* Meta info */}
+                                    <div className="text-[10px] text-gray-500 space-y-0.5">
+                                        <div className="flex justify-between">
+                                            <span>ORDER: #4810</span>
+                                            {showOrderTimestamp && <span>30/05/2026 12:45 PM</span>}
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>TABLE: 14</span>
+                                            {showServerName && <span>WAITER: JANE SMITH</span>}
+                                        </div>
                                     </div>
-                                )}
 
-                                <div className="flex justify-between font-black text-sm border-t border-dotted border-gray-300 pt-1 mt-1">
-                                    <span>TOTAL</span>
-                                    <span>C$1,012.00</span>
+                                    {/* Divider */}
+                                    <div className="overflow-hidden whitespace-nowrap text-gray-400 text-center font-mono text-xs my-1 select-none">
+                                        {dividerChar.repeat(dividerCount)}
+                                    </div>
+
+                                    {/* Items */}
+                                    <div className={`${spacingClass} py-1`}>
+                                        <div className="flex justify-between font-medium">
+                                            <span className="truncate">1x RIBEYE STEAK</span>
+                                            <span>C$680.00</span>
+                                        </div>
+                                        <div className="text-[10px] text-gray-500 ml-3">+ TERM: MEDIUM RARE</div>
+                                        <div className="flex justify-between font-medium">
+                                            <span className="truncate">2x IMPERIAL BEER</span>
+                                            <span>C$160.00</span>
+                                        </div>
+                                        <div className="flex justify-between font-medium">
+                                            <span className="truncate">1x FLAN DE COCO</span>
+                                            <span>C$120.00</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Divider */}
+                                    <div className="overflow-hidden whitespace-nowrap text-gray-400 text-center font-mono text-xs my-1 select-none">
+                                        {dividerChar.repeat(dividerCount)}
+                                    </div>
+
+                                    {/* Totals */}
+                                    <div className={`${spacingClass} text-[11px]`}>
+                                        <div className="flex justify-between">
+                                            <span>SUBTOTAL</span>
+                                            <span>C$960.00</span>
+                                        </div>
+
+                                        {showPromotionDiscounts && (
+                                            <div className="flex justify-between text-red-600 font-semibold">
+                                                <span>DISCOUNTS (HAPPY HOUR)</span>
+                                                <span>-C$80.00</span>
+                                            </div>
+                                        )}
+
+                                        {showTaxBreakdown && (
+                                            <div className="flex justify-between text-gray-500">
+                                                <span>IVA (15%)</span>
+                                                <span>C$132.00</span>
+                                            </div>
+                                        )}
+
+                                        <div className="flex justify-between font-black text-sm border-t border-dotted border-gray-300 pt-1 mt-1">
+                                            <span>TOTAL</span>
+                                            <span>C$1,012.00</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Divider */}
+                                    <div className="overflow-hidden whitespace-nowrap text-gray-400 text-center font-mono text-xs my-1 select-none">
+                                        {dividerChar.repeat(dividerCount)}
+                                    </div>
+
+                                    {/* Footers */}
+                                    <div className={`mt-2 text-center text-[10px] text-gray-500 ${spacingClass}`}>
+                                        {footerLines.map((line, idx) => (
+                                            <div key={idx}>{line}</div>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-
-                            <div className="border-b border-dashed border-gray-300 my-2" />
-
-                            {/* Footers */}
-                            <div className="mt-2 text-center text-[10px] text-gray-500 space-y-1">
-                                {footerLines.map((line, idx) => (
-                                    <div key={idx}>{line}</div>
-                                ))}
-                            </div>
-                        </div>
+                            );
+                        })()}
                     </div>
                 </div>
             </div>
