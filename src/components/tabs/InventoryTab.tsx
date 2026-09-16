@@ -229,8 +229,11 @@ export default function InventoryTab({ supabase, lang, items, setItems, supplier
                                             <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">{items.filter(i => i.track_inventory && i.type === 'ingredient').length} {t('inventory.tracked_items', lang)} · {suppliers.length} {t('inventory.suppliers_count', lang)}</p>
                                         </div>
                                         <div className="flex gap-3">
-                                            <Link href="/categories?type=inventory" className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-gray-700 px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm hover:shadow transition">
+                                            <Link href="/categories?type=inventory" className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-gray-700 dark:text-gray-300 px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm hover:shadow transition">
                                                 {t('menu.manage_categories', lang)}
+                                            </Link>
+                                            <Link href="/tags" className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-amber-700 dark:text-amber-400 px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm hover:shadow transition">
+                                                {lang === 'es' ? 'Etiquetas de Extras' : 'Extras Tags'}
                                             </Link>
                                             <Link href="/items/new?preset=ingredient" className="bg-primary-500 hover:bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm transition">
                                                 {t('inventory.add_item', lang)}

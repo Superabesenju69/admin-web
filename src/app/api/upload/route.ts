@@ -18,9 +18,9 @@ export async function POST(req: NextRequest) {
         }
 
         // Validate file type
-        const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'];
+        const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/webp', 'image/gif'];
         if (!allowedTypes.includes(file.type)) {
-            return NextResponse.json({ error: 'Invalid file type. Only PNG, JPG, and SVG are allowed.' }, { status: 400 });
+            return NextResponse.json({ error: 'Invalid file type. Only PNG, JPG, WEBP, GIF, and SVG are allowed.' }, { status: 400 });
         }
 
         // Validate size (5MB)
@@ -35,10 +35,13 @@ export async function POST(req: NextRequest) {
             'image/png': 'png',
             'image/jpeg': 'jpg',
             'image/jpg': 'jpg',
+            'image/webp': 'webp',
+            'image/gif': 'gif',
             'image/svg+xml': 'svg'
         };
         const tenantId = req.cookies.get('pos_tenant_id')?.value;
-        const folder = tenantId ? `logos/${tenantId}` : 'logos';
+        const requestedFolder = formData.get('folder') as string | null || 'items';
+        const folder = tenantId ? `${requestedFolder}/${tenantId}` : requestedFolder;
         const fileExt = extensionMap[file.type] || 'png';
         const fileName = `${folder}/${uuidv4()}.${fileExt}`;
 

@@ -14,11 +14,12 @@ interface TablesTabProps {
     setTab: any;
     zones: any[];
     setZones: any;
+    setSettings?: any;
 }
 
 const CANVAS_HEIGHT = 600;
 
-export default function TablesTab({ supabase, lang, tables, setTables, settings, setTab, zones, setZones }: TablesTabProps) {
+export default function TablesTab({ supabase, lang, tables, setTables, settings, setTab, zones, setZones, setSettings }: TablesTabProps) {
     const [newTableName, setNewTableName] = useState('');
     const [newTableCapacity, setNewTableCapacity] = useState(4);
     const [newTableZone, setNewTableZone] = useState('Main Floor');
@@ -27,7 +28,76 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
     const [newZoneName, setNewZoneName] = useState('');
     const [newZoneColor, setNewZoneColor] = useState('#6366f1');
     const [floorZoneFilter, setFloorZoneFilter] = useState('all');
+    const [uploadingZoneId, setUploadingZoneId] = useState<string | null>(null);
+    const [editingZoneBgId, setEditingZoneBgId] = useState<string | null>(null);
+    const [zoneUrlInputs, setZoneUrlInputs] = useState<Record<string, string>>({});
     const canvasRef = useRef<HTMLDivElement>(null);
+
+    // Zone Backgrounds map helper
+    const zoneBackgrounds: Record<string, string> =
+        settings?.attendance_settings?.zone_backgrounds ||
+        settings?.zone_backgrounds ||
+        {};
+
+    function getActiveZoneBackground(): string | null {
+        if (floorZoneFilter === 'all') {
+            return settings?.map_background_url || null;
+        }
+        const zoneObj = zones.find((z: any) => z.name === floorZoneFilter || z.id === floorZoneFilter);
+        if (zoneObj) {
+            if (zoneBackgrounds[zoneObj.id]) return zoneBackgrounds[zoneObj.id];
+            if (zoneBackgrounds[zoneObj.name]) return zoneBackgrounds[zoneObj.name];
+            if (zoneObj.background_url) return zoneObj.background_url;
+        }
+        return settings?.map_background_url || null;
+    }
+
+    async function saveZoneBackground(zoneId: string, url: string) {
+        const updatedBackgrounds = {
+            ...zoneBackgrounds,
+            [zoneId]: url
+        };
+        const attendance_settings = {
+            ...(settings?.attendance_settings || {}),
+            zone_backgrounds: updatedBackgrounds
+        };
+
+        await supabase.from('restaurant_settings')
+            .update({ attendance_settings })
+            .not('id', 'is', null);
+
+        if (setSettings) {
+            setSettings((s: any) => ({
+                ...s,
+                attendance_settings,
+                zone_backgrounds: updatedBackgrounds
+            }));
+        }
+        setZones((prev: any[]) => prev.map((z: any) => z.id === zoneId ? { ...z, background_url: url } : z));
+    }
+
+    async function handleZoneBgUpload(zoneId: string, file: File) {
+        setUploadingZoneId(zoneId);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('folder', 'floorplans');
+            const res = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Upload failed');
+            if (data.url) {
+                await saveZoneBackground(zoneId, data.url);
+            }
+        } catch (err: any) {
+            console.error('Zone background upload error:', err);
+            alert(`Error: ${err.message}`);
+        } finally {
+            setUploadingZoneId(null);
+        }
+    }
 
     // snap to grid helper for tables tab
     const snapToGrid = (val: number) => Math.round(val / GRID_SIZE) * GRID_SIZE;
@@ -103,6 +173,8 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
         await supabase.from('table_zones').update(updates).eq('id', id);
     }
 
+    const currentCanvasBg = getActiveZoneBackground();
+
     return (
         <>
             {/* ══════════ TABLES TAB ══════════ */}
@@ -129,21 +201,32 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
                                         <div className="flex flex-col gap-6">
                                             {/* Zone Filter Tabs */}
                                             <div className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-3 shadow-sm overflow-x-auto">
-                                                <button onClick={() => setFloorZoneFilter('all')} className={`px-4 py-2 rounded-xl text-sm font-bold transition whitespace-nowrap ${floorZoneFilter === 'all' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}>{lang === 'es' ? '📍 Todas las Zonas' : '📍 All Zones'}</button>
-                                                {zones.map((z: any) => (
-                                                    <button key={z.id} onClick={() => setFloorZoneFilter(z.name)} className={`px-4 py-2 rounded-xl text-sm font-bold transition whitespace-nowrap flex items-center gap-2 ${floorZoneFilter === z.name ? 'text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100'}`}
-                                                        style={floorZoneFilter === z.name ? { backgroundColor: z.color } : {}}>
-                                                        <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: z.color }}></span>
-                                                        {z.name}
-                                                    </button>
-                                                ))}
+                                                <button onClick={() => setFloorZoneFilter('all')} className={`px-4 py-2 rounded-xl text-sm font-bold transition whitespace-nowrap ${floorZoneFilter === 'all' ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800'}`}>{lang === 'es' ? '📍 Todas las Zonas' : '📍 All Zones'}</button>
+                                                {zones.map((z: any) => {
+                                                    const hasBg = !!(zoneBackgrounds[z.id] || zoneBackgrounds[z.name] || z.background_url);
+                                                    return (
+                                                        <button key={z.id} onClick={() => setFloorZoneFilter(z.name)} className={`px-4 py-2 rounded-xl text-sm font-bold transition whitespace-nowrap flex items-center gap-2 ${floorZoneFilter === z.name ? 'text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                                                            style={floorZoneFilter === z.name ? { backgroundColor: z.color } : {}}>
+                                                            <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: z.color }}></span>
+                                                            <span>{z.name}</span>
+                                                            {hasBg && <span className="text-xs opacity-90" title={lang === 'es' ? 'Fondo de zona personalizado' : 'Custom zone background'}>🖼️</span>}
+                                                        </button>
+                                                    );
+                                                })}
                                             </div>
 
                                             <div className="flex flex-col lg:flex-row gap-6">
                                                 {/* Canvas Area container */}
                                                 <div className="flex-1 bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-                                                    <div className="bg-gray-50 border-b border-gray-100 p-4 flex items-center justify-between">
-                                                        <span className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest">{lang === 'es' ? 'Editor de Plano' : 'Floor Plan Editor'}</span>
+                                                    <div className="bg-gray-50 dark:bg-slate-800/60 border-b border-gray-100 dark:border-slate-800 p-4 flex items-center justify-between">
+                                                        <div className="flex items-center gap-3">
+                                                            <span className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-widest">{lang === 'es' ? 'Editor de Plano' : 'Floor Plan Editor'}</span>
+                                                            {floorZoneFilter !== 'all' && (
+                                                                <span className="text-xs px-2.5 py-0.5 rounded-full bg-primary-100 dark:bg-primary-950/60 text-primary-700 dark:text-primary-300 font-bold">
+                                                                    {lang === 'es' ? `Zona: ${floorZoneFilter}` : `Zone: ${floorZoneFilter}`} {currentCanvasBg ? '🖼️' : ''}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                         <div className="flex items-center gap-4 text-xs">
                                                             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span> {lang === 'es' ? 'Disponible' : 'Available'}</span>
                                                             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block"></span> {lang === 'es' ? 'Ocupada' : 'Occupied'}</span>
@@ -151,7 +234,7 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
                                                             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-gray-400 inline-block"></span> {lang === 'es' ? 'No disponible' : 'Unavailable'}</span>
                                                         </div>
                                                     </div>
-                                                    <div className="flex-1 overflow-auto bg-amber-50/30">
+                                                    <div className="flex-1 overflow-auto bg-amber-50/20 dark:bg-slate-950/40">
                                                         <div
                                                             className="relative"
                                                             style={{
@@ -159,10 +242,10 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
                                                                 width: tables.length > 0 ? Math.max(800, ...tables.map((t: any) => (t.x || 0) + (t.width || 0) + 100)) : '100%',
                                                                 minHeight: CANVAS_HEIGHT,
                                                                 height: tables.length > 0 ? Math.max(CANVAS_HEIGHT, ...tables.map((t: any) => (t.y || 0) + (t.height || 0) + 100)) : CANVAS_HEIGHT,
-                                                                backgroundImage: settings.map_background_url ? `url(${settings.map_background_url}), radial-gradient(#cbd5e1 1px, transparent 1px)` : `radial-gradient(#cbd5e1 1px, transparent 1px)`,
-                                                                backgroundSize: settings.map_background_url ? 'cover, 20px 20px' : `${GRID_SIZE}px ${GRID_SIZE}px`,
-                                                                backgroundPosition: 'top left',
-                                                                backgroundRepeat: 'no-repeat'
+                                                                backgroundImage: currentCanvasBg ? `url(${currentCanvasBg}), radial-gradient(#cbd5e1 1px, transparent 1px)` : `radial-gradient(#cbd5e1 1px, transparent 1px)`,
+                                                                backgroundSize: currentCanvasBg ? 'cover, 20px 20px' : `${GRID_SIZE}px ${GRID_SIZE}px`,
+                                                                backgroundPosition: 'center, top left',
+                                                                backgroundRepeat: 'no-repeat, repeat'
                                                             }}
                                                             ref={canvasRef}
                                                         >
@@ -405,28 +488,123 @@ export default function TablesTab({ supabase, lang, tables, setTables, settings,
 
                                                     {/* Zone Management */}
                                                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-5 shadow-sm">
-                                                        <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-4">{t('tables.manage_zones', lang)}</h3>
-                                                        <div className="flex gap-2 mb-3">
+                                                        <h3 className="font-bold text-gray-900 dark:text-gray-100 mb-1">{t('tables.manage_zones', lang)}</h3>
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                                                            {lang === 'es' ? 'Cree zonas y personalice el fondo del plano para cada una.' : 'Create zones and customize the floor plan background for each.'}
+                                                        </p>
+
+                                                        <div className="flex gap-2 mb-4">
                                                             <input type="text" value={newZoneName} onChange={e => setNewZoneName(e.target.value)}
                                                                 onKeyDown={e => e.key === 'Enter' && addZone()}
                                                                 placeholder={lang === 'es' ? "Nueva zona..." : "New zone name..."}
-                                                                className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
-                                                            <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-xl px-2">
+                                                                className="flex-1 border border-gray-300 dark:border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100" />
+                                                            <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-xl px-2">
                                                                 <input type="color" value={newZoneColor} onChange={e => setNewZoneColor(e.target.value)} className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent" />
                                                             </div>
                                                             <button onClick={addZone} disabled={!newZoneName.trim()} className="bg-primary-600 text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-primary-700 transition disabled:opacity-40">+</button>
                                                         </div>
-                                                        <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                                                            {zones.map((z: any) => (
-                                                                <div key={z.id} className="flex items-center justify-between text-sm py-2 px-3 bg-gray-50 rounded-lg border border-gray-100">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: z.color }}></span>
-                                                                        <span className="font-medium text-gray-700">{z.name}</span>
-                                                                        <span className="text-xs text-gray-400">({tables.filter((t: any) => t.zone === z.name).length} {lang === 'es' ? 'mesas' : 'tables'})</span>
+
+                                                        <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                                                            {zones.map((z: any) => {
+                                                                const zoneBg = zoneBackgrounds[z.id] || zoneBackgrounds[z.name] || z.background_url || '';
+                                                                const isExpanded = editingZoneBgId === z.id;
+                                                                const isUploading = uploadingZoneId === z.id;
+
+                                                                return (
+                                                                    <div key={z.id} className="rounded-xl border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/40 p-3 transition">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: z.color }}></span>
+                                                                                <span className="font-bold text-gray-800 dark:text-gray-200 text-sm">{z.name}</span>
+                                                                                <span className="text-xs text-gray-400">({tables.filter((t: any) => t.zone === z.name).length})</span>
+                                                                                {zoneBg && <span className="text-xs" title={lang === 'es' ? 'Fondo configurado' : 'Background set'}>🖼️</span>}
+                                                                            </div>
+                                                                            <div className="flex items-center gap-1">
+                                                                                <button
+                                                                                    onClick={() => setEditingZoneBgId(isExpanded ? null : z.id)}
+                                                                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${isExpanded ? 'bg-primary-600 text-white' : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 border border-gray-200 dark:border-slate-700'}`}
+                                                                                >
+                                                                                    <span>🖼️</span> {isExpanded ? (lang === 'es' ? 'Cerrar' : 'Close') : (lang === 'es' ? 'Fondo' : 'Background')}
+                                                                                </button>
+                                                                                <button onClick={() => deleteZone(z.id)} className="text-red-400 hover:text-red-600 transition-colors p-1 rounded hover:bg-red-50 text-xs">✕</button>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Expandable Zone Background Editor */}
+                                                                        {isExpanded && (
+                                                                            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-700 space-y-2.5">
+                                                                                <div className="flex items-center justify-between text-xs font-semibold text-gray-600 dark:text-gray-300">
+                                                                                    <span>{lang === 'es' ? 'Fondo del Plano de esta Zona:' : 'Zone Floor Plan Background:'}</span>
+                                                                                    {zoneBg && (
+                                                                                        <button
+                                                                                            onClick={() => saveZoneBackground(z.id, '')}
+                                                                                            className="text-red-500 hover:underline text-[11px]"
+                                                                                        >
+                                                                                            {lang === 'es' ? 'Quitar Fondo' : 'Remove Background'}
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+
+                                                                                {zoneBg ? (
+                                                                                    <div className="relative rounded-lg overflow-hidden border border-gray-300 dark:border-slate-700 h-24 group">
+                                                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                                        <img src={zoneBg} alt="Zone map background" className="w-full h-full object-cover" />
+                                                                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2">
+                                                                                            <button
+                                                                                                onClick={() => setFloorZoneFilter(z.name)}
+                                                                                                className="bg-white/90 text-gray-900 text-xs font-bold px-2.5 py-1 rounded shadow"
+                                                                                            >
+                                                                                                {lang === 'es' ? 'Ver en Plano' : 'View on Map'}
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="text-center py-3 bg-white dark:bg-slate-900 rounded-lg border border-dashed border-gray-300 dark:border-slate-700 text-xs text-gray-400">
+                                                                                        {lang === 'es' ? 'Sin fondo específico (usa cuadrícula/fondo general)' : 'No custom background (uses global/grid)'}
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {/* File Upload Button */}
+                                                                                <div className="flex gap-2 items-center">
+                                                                                    <label className={`flex-1 flex items-center justify-center gap-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-gray-50 rounded-lg py-1.5 px-3 cursor-pointer text-xs font-bold text-gray-700 dark:text-gray-300 transition ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                                                                        <input
+                                                                                            type="file"
+                                                                                            accept="image/*"
+                                                                                            className="hidden"
+                                                                                            onChange={(e) => {
+                                                                                                const file = e.target.files?.[0];
+                                                                                                if (file) handleZoneBgUpload(z.id, file);
+                                                                                            }}
+                                                                                        />
+                                                                                        <span>{isUploading ? '⏳' : '📁'}</span>
+                                                                                        <span>{isUploading ? (lang === 'es' ? 'Subiendo...' : 'Uploading...') : (lang === 'es' ? 'Subir Imagen' : 'Upload Image')}</span>
+                                                                                    </label>
+                                                                                </div>
+
+                                                                                {/* URL Input */}
+                                                                                <div className="flex gap-1.5">
+                                                                                    <input
+                                                                                        type="url"
+                                                                                        value={zoneUrlInputs[z.id] !== undefined ? zoneUrlInputs[z.id] : (zoneBg || '')}
+                                                                                        onChange={e => setZoneUrlInputs({ ...zoneUrlInputs, [z.id]: e.target.value })}
+                                                                                        placeholder="https://.../map.jpg"
+                                                                                        className="flex-1 border border-gray-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100"
+                                                                                    />
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            const val = zoneUrlInputs[z.id] !== undefined ? zoneUrlInputs[z.id] : zoneBg;
+                                                                                            saveZoneBackground(z.id, val.trim());
+                                                                                        }}
+                                                                                        className="bg-slate-800 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-900 transition"
+                                                                                    >
+                                                                                        {lang === 'es' ? 'OK' : 'Set'}
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
                                                                     </div>
-                                                                    <button onClick={() => deleteZone(z.id)} className="text-red-400 hover:text-red-600 transition-colors px-2 py-1 rounded hover:bg-red-50 text-xs">{t('btn.remove', lang)}</button>
-                                                                </div>
-                                                            ))}
+                                                                );
+                                                            })}
                                                         </div>
                                                     </div>
 

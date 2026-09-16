@@ -871,6 +871,8 @@ export default function AdminDashboard() {
                                     stations={stations}
                                     fmtCurrency={fmtCurrency}
                                     typeColor={typeColor}
+                                    settings={settings}
+                                    CURRENCIES={CURRENCIES}
                                 />
                             )}
 
@@ -903,6 +905,7 @@ export default function AdminDashboard() {
                                     setTab={setTab}
                                     zones={zones}
                                     setZones={setZones}
+                                    setSettings={setSettings}
                                 />
                             )}
 

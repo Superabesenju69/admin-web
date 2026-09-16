@@ -90,10 +90,11 @@ export default function SettingsTab({
     const [logoSize, setLogoSize] = useState(template.logo_size || 'medium');
     const [headerLines, setHeaderLines] = useState<string[]>(template.header_lines || []);
     const [footerLines, setFooterLines] = useState<string[]>(template.footer_lines || []);
-    const [showServerName, setShowServerName] = useState(!!template.show_server_name);
-    const [showOrderTimestamp, setShowOrderTimestamp] = useState(!!template.show_order_timestamp);
-    const [showTaxBreakdown, setShowTaxBreakdown] = useState(!!template.show_tax_breakdown);
-    const [showPromotionDiscounts, setShowPromotionDiscounts] = useState(!!template.show_promotion_discounts);
+    const [showServerName, setShowServerName] = useState(template.show_server_name !== false);
+    const [showOrderTimestamp, setShowOrderTimestamp] = useState(template.show_order_timestamp !== false);
+    const [showTaxBreakdown, setShowTaxBreakdown] = useState(template.show_tax_breakdown !== false);
+    const [showPromotionDiscounts, setShowPromotionDiscounts] = useState(template.show_promotion_discounts !== false);
+    const [showDualCurrency, setShowDualCurrency] = useState(template.show_dual_currency !== false);
     const [alignment, setAlignment] = useState(template.alignment || 'center');
     const [paperWidth, setPaperWidth] = useState(template.paper_width || '80mm');
     const [fontFamily, setFontFamily] = useState(template.font_family || 'classic');
@@ -101,6 +102,46 @@ export default function SettingsTab({
     const [headerFormat, setHeaderFormat] = useState(template.header_format || 'bold_uppercase');
     const [dividerStyle, setDividerStyle] = useState(template.divider_style || 'dashes');
     const [lineSpacing, setLineSpacing] = useState(template.line_spacing || 'normal');
+
+    // Dual Currency State
+    const [enableSecondaryCurrency, setEnableSecondaryCurrency] = useState<boolean>(
+        settings?.attendance_settings?.currency_settings?.enable_secondary_currency ??
+        settings?.currency_settings?.enable_secondary_currency ??
+        settings?.enable_secondary_currency ??
+        false
+    );
+    const [secondaryCurrency, setSecondaryCurrency] = useState<string>(
+        settings?.attendance_settings?.currency_settings?.secondary_currency ??
+        settings?.currency_settings?.secondary_currency ??
+        settings?.secondary_currency ??
+        'USD'
+    );
+    const [exchangeRate, setExchangeRate] = useState<number | string>(
+        settings?.attendance_settings?.currency_settings?.exchange_rate ??
+        settings?.currency_settings?.exchange_rate ??
+        settings?.exchange_rate ??
+        36.80
+    );
+
+    // Tax (IVA) State
+    const [enableTax, setEnableTax] = useState<boolean>(
+        settings?.attendance_settings?.tax_settings?.enable_tax ??
+        settings?.tax_settings?.enable_tax ??
+        settings?.enable_tax ??
+        true
+    );
+    const [taxRate, setTaxRate] = useState<number | string>(
+        settings?.attendance_settings?.tax_settings?.tax_rate ??
+        settings?.tax_settings?.tax_rate ??
+        settings?.tax_rate ??
+        15
+    );
+    const [pricesIncludeTax, setPricesIncludeTax] = useState<boolean>(
+        settings?.attendance_settings?.tax_settings?.prices_include_tax ??
+        settings?.tax_settings?.prices_include_tax ??
+        settings?.prices_include_tax ??
+        false
+    );
 
     useEffect(() => {
         if (settings?.receipt_template) {
@@ -113,6 +154,7 @@ export default function SettingsTab({
             setShowOrderTimestamp(t.show_order_timestamp !== false);
             setShowTaxBreakdown(t.show_tax_breakdown !== false);
             setShowPromotionDiscounts(t.show_promotion_discounts !== false);
+            setShowDualCurrency(t.show_dual_currency !== false);
             setAlignment(t.alignment || 'center');
             setPaperWidth(t.paper_width || '80mm');
             setFontFamily(t.font_family || 'classic');
@@ -121,7 +163,19 @@ export default function SettingsTab({
             setDividerStyle(t.divider_style || 'dashes');
             setLineSpacing(t.line_spacing || 'normal');
         }
-    }, [settings?.receipt_template]);
+        if (settings?.attendance_settings?.currency_settings || settings?.currency_settings) {
+            const cs = settings?.attendance_settings?.currency_settings || settings?.currency_settings;
+            if (cs.enable_secondary_currency !== undefined) setEnableSecondaryCurrency(cs.enable_secondary_currency);
+            if (cs.secondary_currency) setSecondaryCurrency(cs.secondary_currency);
+            if (cs.exchange_rate) setExchangeRate(cs.exchange_rate);
+        }
+        if (settings?.attendance_settings?.tax_settings || settings?.tax_settings) {
+            const ts = settings?.attendance_settings?.tax_settings || settings?.tax_settings;
+            if (ts.enable_tax !== undefined) setEnableTax(ts.enable_tax);
+            if (ts.tax_rate !== undefined) setTaxRate(ts.tax_rate);
+            if (ts.prices_include_tax !== undefined) setPricesIncludeTax(ts.prices_include_tax);
+        }
+    }, [settings]);
 
     async function toggleTableService() {
         setSaving(true);
@@ -161,7 +215,7 @@ export default function SettingsTab({
         const { error } = await supabase.from('restaurant_settings').update({ map_background_url: url }).not('id', 'is', null);
         if (error) {
             console.error('Failed to update map background:', error);
-            alert(`Error: ${error.message}`);
+            alert(`Error updating map background: ${error.message}`);
         } else {
             setSettings((s: any) => ({ ...s, map_background_url: url }));
         }
@@ -202,6 +256,88 @@ export default function SettingsTab({
         setSaving(false);
     }
 
+    async function saveCurrencySettings(overrides?: {
+        enableSec?: boolean;
+        secCur?: string;
+        rate?: number | string;
+    }) {
+        setSaving(true);
+        const effectiveEnable = overrides?.enableSec !== undefined ? overrides.enableSec : enableSecondaryCurrency;
+        const effectiveCur = overrides?.secCur !== undefined ? overrides.secCur : secondaryCurrency;
+        const effectiveRate = overrides?.rate !== undefined ? Number(overrides.rate) : Number(exchangeRate) || 36.80;
+
+        const currency_settings = {
+            enable_secondary_currency: effectiveEnable,
+            secondary_currency: effectiveCur,
+            exchange_rate: effectiveRate
+        };
+
+        const attendance_settings = {
+            ...(settings?.attendance_settings || {}),
+            currency_settings
+        };
+
+        const { error } = await supabase.from('restaurant_settings')
+            .update({ attendance_settings })
+            .not('id', 'is', null);
+
+        if (error) {
+            console.error('Error saving currency settings:', error);
+            alert(lang === 'es' ? 'Error al guardar la moneda secundaria' : 'Error saving secondary currency');
+        } else {
+            setSettings((s: any) => ({
+                ...s,
+                attendance_settings,
+                currency_settings,
+                enable_secondary_currency: effectiveEnable,
+                secondary_currency: effectiveCur,
+                exchange_rate: effectiveRate
+            }));
+        }
+        setSaving(false);
+    }
+
+    async function saveTaxSettings(overrides?: {
+        enableTaxVal?: boolean;
+        taxRateVal?: number | string;
+        includeTaxVal?: boolean;
+    }) {
+        setSaving(true);
+        const effectiveEnable = overrides?.enableTaxVal !== undefined ? overrides.enableTaxVal : enableTax;
+        const effectiveRate = overrides?.taxRateVal !== undefined ? Number(overrides.taxRateVal) : Number(taxRate) || 15;
+        const effectiveInclude = overrides?.includeTaxVal !== undefined ? overrides.includeTaxVal : pricesIncludeTax;
+
+        const tax_settings = {
+            enable_tax: effectiveEnable,
+            tax_rate: effectiveRate,
+            prices_include_tax: effectiveInclude
+        };
+
+        const attendance_settings = {
+            ...(settings?.attendance_settings || {}),
+            tax_settings
+        };
+
+        const { error } = await supabase.from('restaurant_settings')
+            .update({ attendance_settings })
+            .not('id', 'is', null);
+
+        if (error) {
+            console.error('Error saving tax settings:', error);
+            alert(lang === 'es' ? 'Error al guardar la configuración de impuestos' : 'Error saving tax settings');
+        } else {
+            setSettings((s: any) => ({
+                ...s,
+                attendance_settings,
+                tax_settings,
+                enable_tax: effectiveEnable,
+                tax_rate: effectiveRate,
+                prices_include_tax: effectiveInclude
+            }));
+        }
+        setSaving(false);
+    }
+
     async function updateLanguage(language: string) {
         setSaving(true);
         try {
@@ -225,6 +361,7 @@ export default function SettingsTab({
             show_order_timestamp: showOrderTimestamp,
             show_tax_breakdown: showTaxBreakdown,
             show_promotion_discounts: showPromotionDiscounts,
+            show_dual_currency: showDualCurrency,
             alignment,
             paper_width: paperWidth,
             font_family: fontFamily,
@@ -381,23 +518,218 @@ export default function SettingsTab({
                         </div>
                     </div>
 
-                    {/* Currency Setting */}
+                    {/* Currency & Dual Pricing Setting */}
                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-6 shadow-sm">
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{t('settings.currency', lang)}</h3>
-                            <p className="text-gray-500 dark:text-gray-400 text-sm mt-1 mb-4">{lang === 'es' ? 'Establezca la moneda para precios, costos y valores de inventario.' : 'Set the currency for prices, costs, and inventory values.'}</p>
-                            <select
-                                value={settings?.currency || 'USD'}
-                                onChange={e => updateCurrency(e.target.value)}
-                                disabled={saving}
-                                className="w-full max-w-xs border border-gray-200 dark:border-slate-800 rounded-xl px-4 py-3 font-bold bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer text-sm"
-                            >
-                                {Object.entries(CURRENCIES).map(([code, info]) => (
-                                    <option key={code} value={code}>{info.symbol} {code} — {info.name}</option>
-                                ))}
-                            </select>
-                            {settings?.currency && settings.currency !== 'USD' && (
-                                <p className="mt-2 text-xs text-green-600 font-semibold">✓ {lang === 'es' ? 'Usando' : 'Using'} {CURRENCIES[settings.currency]?.name || settings.currency}</p>
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                <span>💵</span> {lang === 'es' ? 'Moneda y Precios Duales' : 'Currency & Dual Pricing'}
+                            </h3>
+                            {enableSecondaryCurrency && (
+                                <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 text-xs font-bold px-2.5 py-1 rounded-full border border-emerald-300 dark:border-emerald-800">
+                                    {lang === 'es' ? 'Precios Duales Activo' : 'Dual Pricing Active'}
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
+                            {lang === 'es'
+                                ? 'Establezca la moneda principal de cobro y configure una moneda secundaria con tasa de cambio para clientes o turistas.'
+                                : 'Set your primary billing currency and configure an optional secondary currency with exchange rate for tourists.'}
+                        </p>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5">
+                                    {lang === 'es' ? 'Moneda Principal (Cobro General)' : 'Primary Currency'}
+                                </label>
+                                <select
+                                    value={settings?.currency || 'USD'}
+                                    onChange={e => updateCurrency(e.target.value)}
+                                    disabled={saving}
+                                    className="w-full border border-gray-200 dark:border-slate-800 rounded-xl px-4 py-2.5 font-bold bg-white dark:bg-slate-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500 cursor-pointer text-sm"
+                                >
+                                    {Object.entries(CURRENCIES).map(([code, info]) => (
+                                        <option key={code} value={code}>{info.symbol} {code} — {info.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Secondary Currency Toggle & Inputs */}
+                            <div className="p-4 rounded-xl border border-gray-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <span className="text-sm font-bold text-gray-800 dark:text-gray-200 block">
+                                            {lang === 'es' ? 'Habilitar Moneda Secundaria (ej. USD / Turistas)' : 'Enable Secondary Currency (e.g. USD)'}
+                                        </span>
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                                            {lang === 'es' ? 'Muestra el precio equivalente en el menú, POS y recibo' : 'Shows equivalent price on menu, POS, and receipt'}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const nextVal = !enableSecondaryCurrency;
+                                            setEnableSecondaryCurrency(nextVal);
+                                            saveCurrencySettings({ enableSec: nextVal });
+                                        }}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${enableSecondaryCurrency ? 'bg-primary-600' : 'bg-gray-300 dark:bg-slate-700'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${enableSecondaryCurrency ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+
+                                {enableSecondaryCurrency && (
+                                    <div className="pt-3 border-t border-gray-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                                                {lang === 'es' ? 'Moneda Secundaria' : 'Secondary Currency'}
+                                            </label>
+                                            <select
+                                                value={secondaryCurrency}
+                                                onChange={e => {
+                                                    setSecondaryCurrency(e.target.value);
+                                                    saveCurrencySettings({ secCur: e.target.value });
+                                                }}
+                                                disabled={saving}
+                                                className="w-full border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold bg-white dark:bg-slate-900 text-gray-800 dark:text-gray-200"
+                                            >
+                                                {Object.entries(CURRENCIES).map(([code, info]) => (
+                                                    <option key={code} value={code}>{info.symbol} {code} — {info.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                                                {lang === 'es' ? `Tasa de Cambio (1 ${secondaryCurrency} = )` : `Exchange Rate (1 ${secondaryCurrency} = )`}
+                                            </label>
+                                            <div className="flex gap-2 items-center">
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0.0001"
+                                                    value={exchangeRate}
+                                                    onChange={e => setExchangeRate(e.target.value)}
+                                                    onBlur={() => saveCurrencySettings({ rate: exchangeRate })}
+                                                    className="w-full border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold bg-white dark:bg-slate-900 text-gray-800 dark:text-gray-200"
+                                                    placeholder="36.80"
+                                                />
+                                                <button
+                                                    onClick={() => saveCurrencySettings({ rate: exchangeRate })}
+                                                    disabled={saving}
+                                                    className="bg-primary-600 hover:bg-primary-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition shadow-sm whitespace-nowrap"
+                                                >
+                                                    {lang === 'es' ? 'Guardar' : 'Save'}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="sm:col-span-2 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-xl p-3 text-xs text-blue-900 dark:text-blue-300 flex items-center justify-between">
+                                            <span>
+                                                💡 {lang === 'es' ? 'Ejemplo de Conversión:' : 'Conversion Preview:'} <strong>100 {CURRENCIES[settings?.currency || 'USD']?.symbol || ''}</strong> ≈ <strong>{((100 / (Number(exchangeRate) || 36.80))).toFixed(2)} {CURRENCIES[secondaryCurrency]?.symbol || '$'} {secondaryCurrency}</strong>
+                                            </span>
+                                            <span className="font-mono text-[11px] opacity-80">
+                                                1 {secondaryCurrency} = {Number(exchangeRate) || 36.80} {settings?.currency || 'USD'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tax & IVA Configuration Setting */}
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200 dark:border-slate-800 p-6 shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                                <span>🧾</span> {lang === 'es' ? 'Impuestos e IVA' : 'Taxes & VAT / IVA'}
+                            </h3>
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${enableTax && !pricesIncludeTax ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800'}`}>
+                                {!enableTax ? (lang === 'es' ? 'IVA Desactivado' : 'Tax Disabled') : pricesIncludeTax ? (lang === 'es' ? 'IVA Incluido en Precios' : 'Tax Included in Prices') : (lang === 'es' ? `IVA Adicional (${taxRate}%)` : `Additional Tax (${taxRate}%)`)}
+                            </span>
+                        </div>
+                        <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
+                            {lang === 'es'
+                                ? 'Configure el cálculo de IVA para las órdenes. Puede desactivarlo o indicar que los precios ya tienen el IVA incluido para evitar recargos no deseados al cobrar.'
+                                : 'Configure tax calculations. You can disable tax or indicate that menu prices already include tax to avoid unintended extra charges at checkout.'}
+                        </p>
+
+                        <div className="space-y-3">
+                            {/* Toggle Tax Enabled */}
+                            <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+                                <div>
+                                    <span className="text-sm font-bold text-gray-800 dark:text-gray-200 block">
+                                        {lang === 'es' ? 'Calcular Impuestos / IVA en Órdenes' : 'Calculate Taxes / VAT on Orders'}
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        {lang === 'es' ? 'Si se desactiva, las órdenes no tendrán recargo de IVA' : 'If disabled, orders will not calculate additional tax'}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const nextVal = !enableTax;
+                                        setEnableTax(nextVal);
+                                        saveTaxSettings({ enableTaxVal: nextVal });
+                                    }}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${enableTax ? 'bg-primary-600' : 'bg-gray-300 dark:bg-slate-700'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${enableTax ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+
+                            {enableTax && (
+                                <>
+                                    {/* Toggle Prices Include Tax */}
+                                    <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40">
+                                        <div>
+                                            <span className="text-sm font-bold text-gray-800 dark:text-gray-200 block">
+                                                {lang === 'es' ? 'Los precios del menú ya incluyen IVA (Precios Netos)' : 'Menu Prices Already Include Tax'}
+                                            </span>
+                                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                                                {lang === 'es' ? 'No sumará 15% extra al total al momento de cobrar en el POS' : 'Will not add extra tax on top of cart total during checkout'}
+                                            </span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const nextVal = !pricesIncludeTax;
+                                                setPricesIncludeTax(nextVal);
+                                                saveTaxSettings({ includeTaxVal: nextVal });
+                                            }}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${pricesIncludeTax ? 'bg-amber-600' : 'bg-gray-300 dark:bg-slate-700'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${pricesIncludeTax ? 'translate-x-6' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    {/* Tax Rate Percentage */}
+                                    <div className="grid grid-cols-2 gap-3 items-center pt-1">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                                                {lang === 'es' ? 'Porcentaje de Impuesto / IVA (%)' : 'Tax Rate Percentage (%)'}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="100"
+                                                step="0.5"
+                                                value={taxRate}
+                                                onChange={e => setTaxRate(e.target.value)}
+                                                onBlur={() => saveTaxSettings({ taxRateVal: taxRate })}
+                                                className="w-full border border-gray-200 dark:border-slate-800 rounded-xl px-4 py-2 text-sm font-bold bg-white dark:bg-slate-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                            />
+                                        </div>
+                                        <div className="pt-5">
+                                            <button
+                                                onClick={() => saveTaxSettings({ taxRateVal: taxRate })}
+                                                disabled={saving}
+                                                className="w-full bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white py-2 rounded-xl text-xs font-bold transition shadow-sm"
+                                            >
+                                                {lang === 'es' ? 'Guardar Tasa IVA' : 'Save Tax Rate'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
                             )}
                         </div>
                     </div>
@@ -719,6 +1051,25 @@ export default function SettingsTab({
                                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${showPromotionDiscounts ? 'translate-x-6' : 'translate-x-1'}`} />
                                 </button>
                             </div>
+
+                            {enableSecondaryCurrency && (
+                                <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40">
+                                    <div>
+                                        <span className="text-sm font-bold text-blue-900 dark:text-blue-300 block">
+                                            {lang === 'es' ? `Mostrar Total en ${secondaryCurrency} (Moneda Secundaria)` : `Show Total in ${secondaryCurrency}`}
+                                        </span>
+                                        <span className="text-[11px] text-blue-700 dark:text-blue-400">
+                                            {lang === 'es' ? `Imprime el total convertido con tasa de ${exchangeRate}` : `Prints converted total at rate ${exchangeRate}`}
+                                        </span>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowDualCurrency(!showDualCurrency)}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${showDualCurrency ? 'bg-blue-600' : 'bg-gray-300'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${showDualCurrency ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
@@ -836,15 +1187,22 @@ export default function SettingsTab({
 
                                         {showTaxBreakdown && (
                                             <div className="flex justify-between text-gray-500">
-                                                <span>IVA (15%)</span>
-                                                <span>C$132.00</span>
+                                                <span>IVA ({taxRate}%)</span>
+                                                <span>{pricesIncludeTax ? (lang === 'es' ? 'INCLUIDO' : 'INCLUDED') : !enableTax ? (lang === 'es' ? 'EXENTO' : 'EXEMPT') : 'C$132.00'}</span>
                                             </div>
                                         )}
 
                                         <div className="flex justify-between font-black text-sm border-t border-dotted border-gray-300 pt-1 mt-1">
-                                            <span>TOTAL</span>
+                                            <span>TOTAL ({settings?.currency || 'NIO'})</span>
                                             <span>C$1,012.00</span>
                                         </div>
+
+                                        {showDualCurrency && enableSecondaryCurrency && (
+                                            <div className="flex justify-between font-bold text-xs text-blue-700 border-t border-dashed border-gray-200 pt-1 mt-0.5">
+                                                <span>TOTAL ({secondaryCurrency})</span>
+                                                <span>${(1012.00 / (Number(exchangeRate) || 36.80)).toFixed(2)} {secondaryCurrency} <span className="text-[9px] font-normal text-gray-400">(T.C. {exchangeRate})</span></span>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Divider */}
